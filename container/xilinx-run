@@ -1,0 +1,62 @@
+#!/usr/bin/env bash
+# Starts an AMD Vivado/Vitis tool inside a container created by vivado-distrobox's setup.sh.
+#
+#   vivado, vitis, vivado-<ver>, vitis-<ver>   links to this script; start that tool
+#   xilinx-run <tool> [args...]                start any tool of the install (xsim, v++, ...)
+#   xilinx-run                                 open your shell with the Xilinx environment
+#
+# setup.sh sets XILINX_DIR and XILINX_VERSION on the container.
+# XILINX_RUN_DIR (optional): directory to start in; the menu entries use it.
+
+die() {
+    printf 'xilinx-run: %s\n' "$*" >&2
+    exit 1
+}
+
+[[ -n ${XILINX_DIR:-} && -n ${XILINX_VERSION:-} ]] ||
+    die "XILINX_DIR and XILINX_VERSION are not set. Run this inside a container created by setup.sh."
+
+name=$(basename -- "$0")
+name=${name%-"$XILINX_VERSION"}
+if [[ $name == xilinx-run ]]; then
+    tool=${1:-}
+    (($#)) && shift
+else
+    tool=$name
+fi
+
+# 2025.x and later: <dir>/<ver>/<product>; older releases: <dir>/<product>/<ver>
+settings=
+for candidate in "$XILINX_DIR/$XILINX_VERSION/Vitis" "$XILINX_DIR/$XILINX_VERSION/Vivado" \
+    "$XILINX_DIR/Vitis/$XILINX_VERSION" "$XILINX_DIR/Vivado/$XILINX_VERSION"; do
+    if [[ -f $candidate/settings64.sh ]]; then
+        settings=$candidate/settings64.sh
+        break
+    fi
+done
+[[ -n $settings ]] ||
+    die "Vivado/Vitis $XILINX_VERSION not found in $XILINX_DIR. Install it (see README), then re-run ./setup.sh"
+
+# shellcheck source=/dev/null
+source "$settings"
+
+# Under XWayland, Java draws an empty window unless told the window manager doesn't reparent.
+if [[ -z ${_JAVA_AWT_WM_NONREPARENTING+x} && -n ${WAYLAND_DISPLAY:-} ]]; then
+    export _JAVA_AWT_WM_NONREPARENTING=1
+fi
+
+if [[ -n ${XILINX_RUN_DIR:-} ]] && ! { mkdir -p -- "$XILINX_RUN_DIR" && cd -- "$XILINX_RUN_DIR"; }; then
+    die "cannot use $XILINX_RUN_DIR"
+fi
+
+if [[ -z $tool ]]; then
+    shell=${SHELL:-bash}
+    command -v -- "$shell" >/dev/null || shell=bash
+    exec "$shell"
+fi
+
+# vivado and vitis in /usr/local/bin are links to this script: never start it again.
+tool_path=$(command -v -- "$tool") &&
+    [[ $(realpath -- "$tool_path") != "$(realpath -- "${BASH_SOURCE[0]}")" ]] ||
+    die "$tool not found in the $XILINX_VERSION install"
+exec "$tool_path" "$@"
